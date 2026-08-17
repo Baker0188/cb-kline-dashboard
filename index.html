@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>转债上市后5日K线图</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2e; --panel2:#1d2742; --line:#2b3550;
+    --txt:#e6ebf5; --muted:#8b97b3; --red:#e64545; --green:#19b36b;
+    --accent:#4da3ff;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}
+  header{padding:16px 22px 8px;border-bottom:1px solid var(--line);}
+  h1{font-size:19px;margin:0 0 4px;font-weight:650;letter-spacing:.5px;}
+  .sub{font-size:13px;color:var(--muted);line-height:1.6;}
+  .sub b{color:var(--txt);font-weight:600;}
+  .wrap{padding:14px 18px 26px;}
+  .legend{display:flex;flex-wrap:wrap;gap:8px 14px;margin:10px 0 14px;}
+  .lg{display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;
+    padding:5px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);
+    user-select:none;transition:.15s;}
+  .lg:hover{border-color:var(--accent);}
+  .lg.off{opacity:.38;}
+  .sw{width:13px;height:13px;border-radius:3px;flex:none;}
+  .lg .code{color:var(--muted);font-size:11px;}
+  .chartbox{position:relative;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:8px;overflow:hidden;overscroll-behavior:contain;}
+  .scroll{overflow:hidden;}
+  canvas{display:block;cursor:grab;touch-action:none;-webkit-tap-highlight-color:transparent;}
+  #tip{position:absolute;pointer-events:none;z-index:5;min-width:248px;max-width:300px;
+    background:rgba(13,18,30,.97);border:1px solid var(--accent);border-radius:10px;
+    padding:11px 13px;font-size:12.5px;line-height:1.7;box-shadow:0 8px 30px rgba(0,0,0,.5);
+    display:none;}
+  #tip .tname{font-size:14px;font-weight:700;margin-bottom:5px;display:flex;justify-content:space-between;gap:10px;}
+  #tip .tname .c{color:var(--muted);font-weight:500;font-size:11px;}
+  #tip .row{display:flex;justify-content:space-between;gap:14px;}
+  #tip .k{color:var(--muted);}
+  #tip .v{font-weight:600;font-variant-numeric:tabular-nums;}
+  #tip .sep{height:1px;background:var(--line);margin:6px 0;}
+  #tip .grp{color:var(--accent);font-size:11px;font-weight:600;margin:1px 0 4px;letter-spacing:.5px;}
+  .up{color:var(--red);} .dn{color:var(--green);}
+  .acc{color:var(--accent);font-weight:600;}
+  .hint{font-size:11.5px;color:var(--muted);margin-top:10px;line-height:1.6;}
+  .foot{margin-top:8px;font-size:11.5px;color:var(--muted);line-height:1.7;}
+  .note{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 13px;margin-top:10px;font-size:12px;color:var(--muted);line-height:1.7;}
+  .note b{color:var(--txt);}
+</style>
+</head>
+<body>
+<header>
+  <h1>可转债上市后 5 个交易日 K 线图</h1>
+  <div class="sub">
+    输入区间 <b id="rng"></b>（筛选该窗口内上市的可转债）·
+    每只转债取上市后前 5 个真实交易日 · 纵轴为价格（元）·
+    同一日期可并列显示多只转债 · 相邻交易日背景色交替
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="legend" id="legend"></div>
+  <div class="chartbox" id="chartbox">
+    <div class="scroll" id="scroll"><canvas id="cv"></canvas></div>
+    <div id="tip"></div>
+  </div>
+  <div class="hint" id="hint"></div>
+  <div class="note">
+    <b>字段说明：</b> 悬停（手机端点按）K 线查看——转债/正股当日涨跌幅、转债规模、评级、转股价值，以及当日 OHLC、成交额与换手率（换手率置于成交额之下，不再显示成绩金额）；另含<b>持有结构两项核心指标</b>：<b>首日可流通比例</b>（=100%−法定锁定比例）与<b>网上散户比例</b>（=网上社会公众投资者实际认购额÷发行总额），数据取自 26 年上市转债持有人结构总结。
+    <b>相邻交易日背景交替（对比鲜明）并以虚线分隔</b>；<b>同一转债相邻交易日用其主色主线连接</b>；<b>在图上按住拖动可平移日期、滚轮缩放（手机：单指拖动平移、双指捏合缩放、点按查看）</b>。悬停/点按某只转债 K 线时，<b>该转债 5 根 K 线高亮、其余转债变暗以突出</b>，且<b>提示框自动避让该转债 5 日 K 线</b>（不会挡住它）。悬停显示上市后 <b>D1~D5</b> 天数。红涨绿跌（A 股惯例）。点击图例可隐藏/显示对应转债。
+  </div>
+  <div class="foot" id="foot"></div>
+</div>
+
+<script>
+/* ===================== 数据（真实行情，来源：westock 可转债/正股 K线） ===================== */
+const META = {"range": ["2026-08-01", "2026-08-17"], "generated": "2026-08-17"};
+
+// 输入窗口内上市、且取到真实首日交易的 17 只可转债
+const BONDS = [{"name": "久吾转02", "code": "123276", "stock": "久吾高科", "stockCode": "300631", "scale": 3.0, "convValue": 88.23, "winRate": 0.0009, "winAmt": 9, "rating": "A+", "k": [{"d": "2026-08-04", "o": 130.0, "c": 157.3, "l": 130.0, "h": 157.3, "turn": 10.32, "chg": 57.3, "sc": 0.33, "v": 309690, "amt": 46060000}, {"d": "2026-08-05", "o": 188.76, "c": 188.76, "l": 188.76, "h": 188.76, "turn": 11.12, "chg": 20.0, "sc": 1.33, "v": 333590, "amt": 62970000}, {"d": "2026-08-06", "o": 213.0, "c": 194.99, "l": 193.01, "h": 218.8, "turn": 546.93, "chg": 3.3, "sc": 1.51, "v": 16407830, "amt": 3371250000}, {"d": "2026-08-07", "o": 193.0, "c": 187.75, "l": 186.02, "h": 194.4, "turn": 247.7, "chg": -3.71, "sc": 2.18, "v": 7431150, "amt": 1409740000}, {"d": "2026-08-10", "o": 187.93, "c": 195.29, "l": 186.5, "h": 199.0, "turn": 382.51, "chg": 4.02, "sc": 2.54, "v": 11475200, "amt": 2229910000}], "tradable": 72.73, "onlineRetail": 29.06, "lock": 27.27, "color": "#d65151"}, {"name": "江农转债", "code": "110102", "stock": "江山股份", "stockCode": "600389", "scale": 11.85, "convValue": 99.08, "winRate": 0.0036, "winAmt": 36, "rating": "AA+", "k": [{"d": "2026-08-05", "o": 130.0, "c": 157.3, "l": 130.0, "h": 157.3, "turn": 9.13, "chg": 57.3, "sc": -0.68, "v": 1082450, "amt": 168420000}, {"d": "2026-08-06", "o": 170.0, "c": 170.72, "l": 166.6, "h": 180.5, "turn": 258.78, "chg": 8.53, "sc": 1.66, "v": 30665770, "amt": 5354980000}, {"d": "2026-08-07", "o": 169.69, "c": 163.92, "l": 163.6, "h": 173.2, "turn": 66.43, "chg": -3.98, "sc": -0.67, "v": 7872200, "amt": 1321760000}, {"d": "2026-08-10", "o": 163.5, "c": 171.73, "l": 162.0, "h": 172.0, "turn": 65.13, "chg": 4.76, "sc": 0.34, "v": 7717710, "amt": 1302350000}, {"d": "2026-08-11", "o": 171.9, "c": 165.6, "l": 165.17, "h": 172.76, "turn": 17.75, "chg": -3.57, "sc": -3.76, "v": 2103940, "amt": 352330000}], "tradable": 71.04, "onlineRetail": 27.95, "lock": 28.96, "color": "#d6aa51"}, {"name": "曙26转债", "code": "113708", "stock": "中科曙光", "stockCode": "603019", "scale": 80.0, "convValue": 80.63, "winRate": 0.0407, "winAmt": 407, "rating": "AAA", "k": [{"d": "2026-08-06", "o": 130.0, "c": 146.72, "l": 130.0, "h": 157.3, "turn": 24.64, "chg": 46.72, "sc": -0.96, "v": 19712110, "amt": 2884210000}, {"d": "2026-08-07", "o": 149.1, "c": 156.04, "l": 149.06, "h": 159.97, "turn": 126.9, "chg": 6.35, "sc": 1.1, "v": 101517350, "amt": 15818310000}, {"d": "2026-08-10", "o": 159.0, "c": 153.58, "l": 152.01, "h": 159.8, "turn": 32.64, "chg": -1.58, "sc": -2.85, "v": 26114250, "amt": 4017070000}, {"d": "2026-08-11", "o": 153.5, "c": 152.16, "l": 151.69, "h": 154.28, "turn": 14.05, "chg": -0.92, "sc": 0.13, "v": 11238170, "amt": 1719330000}, {"d": "2026-08-12", "o": 152.98, "c": 151.97, "l": 151.58, "h": 153.49, "turn": 11.04, "chg": -0.12, "sc": 0.08, "v": 8835310, "amt": 1347450000}], "tradable": 97.24, "onlineRetail": 48.46, "lock": 2.76, "color": "#aad651"}, {"name": "赛斯转债", "code": "118073", "stock": "赛恩斯", "stockCode": "688480", "scale": 5.52, "convValue": 91.72, "winRate": 0.0011, "winAmt": 11, "rating": "AA", "k": [{"d": "2026-08-12", "o": 130.0, "c": 157.3, "l": 130.0, "h": 157.3, "turn": 3.46, "chg": 57.3, "sc": 1.71, "v": 191130, "amt": 29630000}, {"d": "2026-08-13", "o": 188.7, "c": 188.76, "l": 185.52, "h": 188.76, "turn": 28.08, "chg": 20.0, "sc": -0.01, "v": 1550010, "amt": 291210000}, {"d": "2026-08-14", "o": 188.05, "c": 175.84, "l": 171.35, "h": 188.5, "turn": 225.61, "chg": -6.84, "sc": -0.68, "v": 12451610, "amt": 2233550000}, {"d": "2026-08-17", "o": 173.0, "c": 183.253, "l": 162.039, "h": 185.45, "turn": 129.4, "chg": 4.22, "sc": 1.77, "v": 714139, "amt": 1251950865}], "tradable": 46.37, "onlineRetail": 19.26, "lock": 53.63, "color": "#51d651"}, {"name": "特宝转债", "code": "118074", "stock": "特宝生物", "stockCode": "688278", "scale": 15.33, "convValue": 104.9, "winRate": 0.001, "winAmt": 10, "rating": "AA+", "k": [{"d": "2026-08-13", "o": 130.0, "c": 157.3, "l": 130.0, "h": 157.3, "turn": 1.94, "chg": 57.3, "sc": 3.49, "v": 297650, "amt": 46160000}, {"d": "2026-08-14", "o": 179.0, "c": 175.12, "l": 172.98, "h": 182.69, "turn": 92.92, "chg": 11.33, "sc": -1.03, "v": 14247040, "amt": 2531600000}, {"d": "2026-08-17", "o": 173.771, "c": 167.822, "l": 165.5, "h": 175.123, "turn": 18.58, "chg": -4.17, "sc": -4.69, "v": 284948, "amt": 478602628}], "tradable": 40.66, "onlineRetail": 6.6, "lock": 59.34, "color": "#51d6aa"}, {"name": "申能转债", "code": "110103", "stock": "申能股份", "stockCode": "600642", "scale": 20.0, "convValue": 97.83, "winRate": 0.0058, "winAmt": 58, "rating": "AAA", "k": [{"d": "2026-08-13", "o": 130.0, "c": 157.3, "l": 130.0, "h": 157.3, "turn": 6.25, "chg": 57.3, "sc": 1.42, "v": 1250390, "amt": 194650000}, {"d": "2026-08-14", "o": 165.0, "c": 148.4, "l": 147.63, "h": 165.79, "turn": 88.71, "chg": -5.66, "sc": -1.99, "v": 17742900, "amt": 2722980000}, {"d": "2026-08-17", "o": 147.999, "c": 146.017, "l": 144.715, "h": 150.276, "turn": 11.19, "chg": -1.61, "sc": 0.12, "v": 223797, "amt": 328279664}], "tradable": 46.42, "onlineRetail": 28.54, "lock": 53.58, "color": "#51aad6"}, {"name": "炬申转债", "code": "127115", "stock": "炬申股份", "stockCode": "001202", "scale": 3.8, "convValue": 97.46, "winRate": 0.0003, "winAmt": 3, "rating": "AA-", "k": [{"d": "2026-08-13", "o": 130.0, "c": 157.3, "l": 130.0, "h": 157.3, "turn": 2.62, "chg": 57.3, "sc": -2.19, "v": 99610, "amt": 14950000}, {"d": "2026-08-14", "o": 188.76, "c": 188.76, "l": 188.76, "h": 188.76, "turn": 7.36, "chg": 20.0, "sc": -0.37, "v": 279600, "amt": 52780000}, {"d": "2026-08-17", "o": 205.866, "c": 192.457, "l": 189.377, "h": 209.844, "turn": 109.58, "chg": 1.96, "sc": 2.02, "v": 416394, "amt": 825447508}], "tradable": 34.49, "onlineRetail": 8.94, "lock": 65.51, "color": "#5151d6"}, {"name": "玉禾转债", "code": "123277", "stock": "玉禾田", "stockCode": "300815", "scale": 15.0, "convValue": 99.76, "winRate": 0.0025, "winAmt": 25, "rating": "AA", "k": [{"d": "2026-08-14", "o": 130.0, "c": 157.3, "l": 130.0, "h": 157.3, "turn": 8.69, "chg": 57.3, "sc": -1.69, "v": 1302880, "amt": 197390000}, {"d": "2026-08-17", "o": 152.0, "c": 145.056, "l": 141.6, "h": 152.0, "turn": 54.19, "chg": -7.78, "sc": -0.55, "v": 812892, "amt": 1179908841}], "tradable": 57.09, "onlineRetail": 17.54, "lock": 42.91, "color": "#aa51d6"}, {"name": "振26转债", "code": "113709", "stock": "振华股份", "stockCode": "603067", "scale": 8.78, "convValue": 82.32, "winRate": 0.002, "winAmt": 20, "rating": "AA", "tradable": 64.95, "onlineRetail": 22.59, "lock": 35.05, "k": [{"d": "2026-08-17", "o": 130.0, "c": 130.0, "l": 130.0, "h": 130.0, "turn": 0.53, "chg": 30.0, "sc": 5.57, "v": 4615, "amt": 5999500}], "color": "#d651aa"}];
+
+// X 轴：输入窗口起点 -> 各转债上市后第 5 个交易日（连续交易日历）
+const DATES = ["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-10", "2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14", "2026-08-17"];
+
+// 2 个交替背景色（相邻日期不同即可）
+const PALETTE = ["#102a48", "#4a2a4f"];
+// 标题/区间随数据集动态（支持分月生成）
+document.title = '转债上市后5日K线图 · ' + META.range[0] + ' ~ ' + META.range[1];
+const _rng=document.getElementById('rng'); if(_rng) _rng.textContent = META.range[0] + ' ~ ' + META.range[1];
+
+/* ===================== 预处理 ===================== */
+const visible = {}; BONDS.forEach(b=>visible[b.code]=true);
+// 按日期索引聚合：dateIndex -> [ {bond, k} ... ]
+const byDate = DATES.map(()=>[]);
+BONDS.forEach(b=>{
+  b.k.forEach(k=>{
+    const di = DATES.indexOf(k.d);
+    if(di>=0) byDate[di].push({bond:b,k});
+  });
+});
+// y 轴范围
+let lo=Infinity, hi=-Infinity;
+BONDS.forEach(b=>b.k.forEach(k=>{lo=Math.min(lo,k.l);hi=Math.max(hi,k.h);}));
+const ypad=(hi-lo)*0.06; lo-=ypad; hi+=ypad;
+
+/* ===================== 绘制 ===================== */
+const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+const tip=document.getElementById('tip');
+const scrollEl=document.getElementById('scroll');
+const chartbox=document.getElementById('chartbox');
+let W=0,H=0,dpr=1, geo=null, rects=[];
+let hoverBond=null;   // 当前悬停的转债 code（高亮该转债、变暗其余）
+const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints>0);
+
+// 视口（可拖动平移 / 滚轮缩放）
+let viewStart=0;                                   // 起始日期索引(可为小数, 平滑平移)
+let viewCount=Math.min(DATES.length, 16);          // 可见日期数
+let viewCountInit=false;                           // 首次 resize 时按屏宽自适应初始可见天数
+const MIN_COUNT=6;
+
+function fmt(n){return n.toLocaleString('zh-CN');}
+function cls(v){return v>=0?'up':'dn';}
+function pct(v){return (v>=0?'+':'')+v.toFixed(2)+'%';}
+function priceY(p){const {T,ph}=geo; const range=hi-lo; return T+ph*(1-(p-lo)/range);}
+// 日期 i 的屏幕 x 中心（连续坐标，支持小数 viewStart 平滑平移）
+function xOfDate(i){const {L,pw}=geo; return L + pw*((i-viewStart)/viewCount);}
+function colWvis(){const {pw}=geo; return pw/viewCount;}
+
+function resize(){
+  const viewW=scrollEl.clientWidth;
+  H=Math.max(440, Math.min(720, viewW*0.50));
+  W=viewW;
+  // 首次按屏宽自适应初始可见天数：蜡烛宽度≈屏宽/天数，窄屏少显示几列更易点按
+  if(!viewCountInit){ viewCount=Math.max(MIN_COUNT, Math.min(DATES.length, Math.floor(W/42))); viewCountInit=true; }
+  dpr=window.devicePixelRatio||1;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  cv.width=W*dpr; cv.height=H*dpr;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  if(DATES.length<=viewCount) viewStart=0;
+  else viewStart=Math.max(0,Math.min(viewStart, DATES.length-viewCount));
+  draw();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const L=60,R=16,T=44,B=58;
+  const pw=W-L-R, ph=H-T-B;
+  geo={L,R,T,B,pw,ph};
+  const cw=colWvis();
+  // 背景（相邻交替双色，对比鲜明）
+  const i0=Math.max(0,Math.floor(viewStart)-1), i1=Math.min(DATES.length-1, Math.ceil(viewStart+viewCount)+1);
+  for(let i=i0;i<=i1;i++){
+    const x=xOfDate(i);
+    ctx.fillStyle=PALETTE[i%PALETTE.length];
+    ctx.globalAlpha=0.55; ctx.fillRect(x-cw/2,T,cw,ph); ctx.globalAlpha=1;
+  }
+  // 日期之间虚线分隔
+  ctx.save();
+  ctx.setLineDash([3,3]); ctx.strokeStyle='rgba(255,255,255,.16)'; ctx.lineWidth=1;
+  for(let i=Math.max(0,Math.floor(viewStart)); i<Math.min(DATES.length-1, Math.ceil(viewStart+viewCount)); i++){
+    const x=xOfDate(i)+cw/2;
+    ctx.beginPath();ctx.moveTo(x,T);ctx.lineTo(x,T+ph);ctx.stroke();
+  }
+  ctx.setLineDash([]); ctx.restore();
+  // y 网格 + 标签
+  const steps=6, range=hi-lo;
+  ctx.font='11px sans-serif'; ctx.textBaseline='middle';
+  for(let s=0;s<=steps;s++){
+    const val=lo+range*s/steps, y=T+ph*(1-s/steps);
+    ctx.strokeStyle='rgba(255,255,255,.07)'; ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(L+pw,y);ctx.stroke();
+    ctx.fillStyle='#8b97b3'; ctx.textAlign='right'; ctx.fillText(val.toFixed(0),L-8,y);
+  }
+  // 价格刻度线（100 元面值）
+  const y100=T+ph*(1-(100-lo)/range);
+  if(y100>T&&y100<T+ph){
+    ctx.strokeStyle='rgba(255,210,90,.45)'; ctx.setLineDash([4,4]);
+    ctx.beginPath();ctx.moveTo(L,y100);ctx.lineTo(L+pw,y100);ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle='rgba(255,210,90,.85)'; ctx.textAlign='left';
+    ctx.fillText('面值100',L+4,y100-9);
+  }
+  // 同一转债相邻交易日的主色主线（在蜡烛之下, 裁剪到绘图区）
+  ctx.save();
+  ctx.beginPath(); ctx.rect(L,T,pw,ph); ctx.clip();
+  BONDS.forEach(b=>{
+    if(!visible[b.code]) return;
+    const dim = hoverBond && hoverBond!==b.code;
+    const emph = hoverBond===b.code;
+    const pts=[];
+    b.k.forEach(k=>{
+      const i=DATES.indexOf(k.d); if(i<0) return;
+      if(i<viewStart-1||i>viewStart+viewCount+1) return;
+      pts.push({i, x:bondX(i,b), y:priceY(k.c)});
+    });
+    if(pts.length>1){
+      ctx.strokeStyle=b.color;
+      ctx.globalAlpha = emph ? 0.95 : (dim ? 0.10 : 0.5);
+      ctx.lineWidth = emph ? 2.4 : 1.6;
+      ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y);
+      for(let j=1;j<pts.length;j++) ctx.lineTo(pts[j].x,pts[j].y);
+      ctx.stroke(); ctx.globalAlpha=1;
+    }
+  });
+  ctx.restore();
+  // K线（蜡烛）
+  rects=[];
+  const diA=Math.max(0,Math.floor(viewStart)), diB=Math.min(DATES.length-1,Math.ceil(viewStart+viewCount));
+  for(let i=diA;i<=diB;i++){
+    const cx=xOfDate(i);
+    const list=byDate[i].filter(o=>visible[o.bond.code]);
+    const n=list.length; if(!n) continue;
+    const slot=cw*0.82/n, bw=Math.min(slot*0.62,15);
+    list.forEach((o,idx)=>{
+      const x=cx-(n*slot)/2+slot*(idx+0.5);
+      const k=o.k, b=o.bond;
+      const dim = hoverBond && hoverBond!==b.code;
+      const emph = hoverBond===b.code;
+      const yo=priceY(k.o), yc=priceY(k.c), yl=priceY(k.l), yh=priceY(k.h);
+      const up=k.c>=k.o; const col=up?'#e64545':'#19b36b';
+      ctx.globalAlpha = dim ? 0.14 : 1;
+      // 影线
+      ctx.strokeStyle=col; ctx.lineWidth=emph?2:1.4;
+      ctx.beginPath();ctx.moveTo(x,yh);ctx.lineTo(x,yl);ctx.stroke();
+      // 实体
+      const top=Math.min(yo,yc), bh=Math.max(2,Math.abs(yc-yo));
+      ctx.fillStyle=col; ctx.fillRect(x-bw/2,top,bw*(emph?1.25:1),bh);
+      ctx.globalAlpha=1;
+      rects.push({x:x-bw/2,y:Math.min(yh,yc)-bw,w:bw,h:Math.abs(yh-yl)+bw*2,bond:b,k,di:i});
+    });
+  }
+  // x 标签
+  ctx.fillStyle='#aeb9d6'; ctx.font='11px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+  for(let i=diA;i<=diB;i++){
+    const x=xOfDate(i);
+    ctx.fillText(DATES[i].slice(5), x, T+ph+8);
+    if(byDate[i].length){ ctx.fillStyle='#4da3ff'; ctx.beginPath();ctx.arc(x,T+ph+28,2.2,0,7);ctx.fill(); ctx.fillStyle='#aeb9d6'; }
+  }
+  // 视口提示
+  const from=Math.floor(viewStart)+1, to=Math.min(DATES.length, Math.floor(viewStart)+Math.ceil(viewCount));
+  const nav = isTouch ? ' · 单指拖动平移 · 双指捏合缩放 · 点按查看' : ' · 在图上按住拖动可平移 · 滚轮缩放';
+  document.getElementById('hint').textContent=
+    `视图：显示第 ${from}~${to} 日 / 共 ${DATES.length} 个交易日`+
+    (DATES.length>viewCount? nav : ' · 已全部显示');
+}
+// 某转债在某日期列中的蜡烛中心 x（与蜡烛布局一致）
+function bondX(i,bond){
+  const cx=xOfDate(i);
+  const list=byDate[i].filter(o=>visible[o.bond.code]);
+  const n=list.length; if(!n) return cx;
+  const idx=list.findIndex(o=>o.bond.code===bond.code);
+  if(idx<0) return cx;
+  const slot=colWvis()*0.82/n;
+  return cx-(n*slot)/2+slot*(idx+0.5);
+}
+
+/* ===================== 交互 ===================== */
+function hit(mx,my){
+  for(const r of rects){
+    if(mx>=r.x-3 && mx<=r.x+r.w+3 && my>=r.y-3 && my<=r.y+r.h+3) return r;
+  }
+  return null;
+}
+let dragging=false, dragX=0;
+cv.addEventListener('mousedown',e=>{
+  if(DATES.length<=viewCount) return;
+  dragging=true; dragX=e.clientX; tip.style.display='none'; cv.style.cursor='grabbing';
+});
+window.addEventListener('mousemove',e=>{
+  if(dragging){
+    const dx=e.clientX-dragX; dragX=e.clientX;
+    const dView=-dx/(geo?geo.pw:W)*viewCount;
+    viewStart=Math.max(0,Math.min(viewStart+dView, DATES.length-viewCount));
+    draw(); return;
+  }
+  const rect=cv.getBoundingClientRect();
+  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  const r=hit(mx,my);
+  if(!r){
+    if(hoverBond){ hoverBond=null; draw(); }
+    tip.style.display='none'; cv.style.cursor=DATES.length>viewCount?'grab':'default'; return;
+  }
+  const code=r.bond.code;
+  if(hoverBond!==code){ hoverBond=code; draw(); }
+  cv.style.cursor='pointer';
+  showTip(r,e);
+});
+window.addEventListener('mouseup',()=>{ if(dragging){dragging=false; cv.style.cursor=DATES.length>viewCount?'grab':'default';} });
+cv.addEventListener('mouseleave',()=>{ if(!dragging){ tip.style.display='none'; if(hoverBond){ hoverBond=null; draw(); } } });
+// 滚轮缩放（纵向滚轮 -> 横向缩放日期窗口）
+scrollEl.addEventListener('wheel',e=>{
+  if(DATES.length<=viewCount) return;
+  e.preventDefault();
+  const center=viewStart+viewCount/2;
+  if(e.deltaY>0) viewCount=Math.min(DATES.length, viewCount*1.15);
+  else viewCount=Math.max(MIN_COUNT, viewCount*0.87);
+  viewStart=Math.max(0,Math.min(center-viewCount/2, DATES.length-viewCount));
+  draw();
+},{passive:false});
+
+/* ===================== 触屏交互（手机：单指拖动平移 / 双指捏合缩放 / 点按查看） ===================== */
+let touchMode=null;          // 'pan' | 'pinch' | null
+let touchLastX=0, touchMoved=0, touchStartT=0, touchStartCount=0, touchStartDist=0, touchCenterDate=0;
+
+// 给定屏幕 clientX，反推其对应的日期索引（用于双指缩放时保持中点不动）
+function dateAtClientX(cx){ const r=cv.getBoundingClientRect(); const mx=cx-r.left; const {L,pw}=geo||{L:60,pw:1}; return viewStart+(mx-L)/pw*viewCount; }
+
+cv.addEventListener('touchstart',e=>{
+  if(e.touches.length===1){
+    touchMode='pan'; const t=e.touches[0];
+    touchLastX=t.clientX; touchMoved=0; touchStartT=Date.now();
+    tip.style.display='none';
+  } else if(e.touches.length===2){
+    touchMode='pinch'; const [a,b]=e.touches;
+    touchStartDist=Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY)||1;
+    touchStartCount=viewCount;
+    touchCenterDate=dateAtClientX((a.clientX+b.clientX)/2);
+  }
+  if(isTouch) e.preventDefault();   // 阻止页面滚动/缩放，交给自定义手势
+},{passive:false});
+
+window.addEventListener('touchmove',e=>{
+  if(!touchMode) return;
+  if(touchMode==='pan' && e.touches.length===1){
+    const t=e.touches[0]; const dx=t.clientX-touchLastX; touchLastX=t.clientX;
+    touchMoved+=Math.abs(dx);
+    if(DATES.length>viewCount){
+      const dView=-dx/(geo?geo.pw:W)*viewCount;
+      viewStart=Math.max(0,Math.min(viewStart+dView, DATES.length-viewCount));
+      draw();
+    }
+  } else if(touchMode==='pinch' && e.touches.length>=2){
+    const [a,b]=e.touches;
+    const dist=Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY)||1;
+    const ratio=dist/touchStartDist;
+    let nc=touchStartCount/ratio;                       // 双指张开->天数变少(放大)
+    nc=Math.max(MIN_COUNT, Math.min(DATES.length, nc));
+    viewCount=nc;
+    viewStart=Math.max(0, Math.min(touchCenterDate-nc/2, DATES.length-nc));  // 中点日期保持不变
+    draw();
+  }
+  if(isTouch) e.preventDefault();
+},{passive:false});
+
+window.addEventListener('touchend',e=>{
+  if(touchMode==='pan'){
+    const dt=Date.now()-touchStartT;
+    // 位移很小且时间短 -> 视为点按：命中则高亮+弹框，否则取消
+    if(touchMoved<8 && dt<350 && e.changedTouches.length){
+      const t=e.changedTouches[0]; const r=cv.getBoundingClientRect();
+      const mx=t.clientX-r.left, my=t.clientY-r.top;
+      const hitR=hit(mx,my);
+      if(hitR){ hoverBond=hitR.bond.code; draw(); showTip(hitR,{clientX:t.clientX, clientY:t.clientY}); }
+      else { if(hoverBond){hoverBond=null; draw();} tip.style.display='none'; }
+    }
+  }
+  // 双指松到剩 1 指 -> 继续平移；全松 -> 结束
+  if(e.touches.length===1){ touchMode='pan'; const t=e.touches[0]; touchLastX=t.clientX; touchMoved=0; }
+  else if(e.touches.length>=2){ touchMode='pinch'; const [a,b]=e.touches; touchStartDist=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)||1; touchStartCount=viewCount; touchCenterDate=dateAtClientX((a.clientX+b.clientX)/2); }
+  else { touchMode=null; }
+},{passive:false});
+
+cv.addEventListener('touchcancel',()=>{ touchMode=null; });
+
+function showTip(r,pos){
+  const b=r.bond,k=r.k;
+  const arrow=v=>`<span class="${cls(v)}">${pct(v)}</span>`;
+  tip.innerHTML=`
+   <div class="tname"><span style="color:${b.color}">${b.name}</span><span class="c">${b.code}</span></div>
+   <div class="row"><span class="k">日期</span><span class="v">${k.d}</span></div>
+   <div class="row"><span class="k">上市后天数</span><span class="v">D${b.k.indexOf(k)+1}</span></div>
+   <div class="row"><span class="k">转债涨跌幅</span><span class="v ${cls(k.chg)}">${pct(k.chg)}</span></div>
+   <div class="row"><span class="k">正股 ${b.stock}</span><span class="v ${cls(k.sc)}">${pct(k.sc)}</span></div>
+   <div class="sep"></div>
+   <div class="row"><span class="k">转债规模</span><span class="v">${b.scale} 亿</span></div>
+   <div class="row"><span class="k">评级</span><span class="v">${b.rating}</span></div>
+   <div class="row"><span class="k">转股价值</span><span class="v">${b.convValue!=null?b.convValue+' 元':'—'}</span></div>
+   <div class="grp">持有结构（来源：26年持有人结构总结）</div>
+   <div class="row"><span class="k">首日可流通比例</span><span class="v acc">${b.tradable!=null?b.tradable.toFixed(2)+'%':'—'}</span></div>
+   <div class="row"><span class="k">网上散户比例</span><span class="v acc">${b.onlineRetail!=null?b.onlineRetail.toFixed(2)+'%':'—'}</span></div>
+   <div class="sep"></div>
+   <div class="row"><span class="k">开 / 收</span><span class="v">${k.o} / ${k.c}</span></div>
+   <div class="row"><span class="k">高 / 低</span><span class="v">${k.h} / ${k.l}</span></div>
+   <div class="row"><span class="k">成交额</span><span class="v">${(k.amt/1e8).toFixed(2)} 亿</span></div>
+   <div class="row"><span class="k">换手率</span><span class="v">${k.turn}%</span></div>`;
+  tip.style.display='block';
+  const cbRect=chartbox.getBoundingClientRect();
+  const cvRect=cv.getBoundingClientRect();
+  const tw=tip.offsetWidth, th=tip.offsetHeight;
+  const pad=8, ax0=pad, ax1=cbRect.width-pad, ay0=pad, ay1=cbRect.height-pad;
+  // 该转债 5 根 K 线在 chartbox 坐标系下的包围盒（提示框应尽量不遮挡它）
+  const ox=cvRect.left-cbRect.left, oy=cvRect.top-cbRect.top;
+  const rrs=rects.filter(r=>r.bond.code===b.code);
+  let tx, ty;
+  if(rrs.length){
+    let bx0=Infinity,bx1=-Infinity,by0=Infinity,by1=-Infinity;
+    rrs.forEach(r=>{ bx0=Math.min(bx0,r.x); bx1=Math.max(bx1,r.x+r.w); by0=Math.min(by0,r.y); by1=Math.max(by1,r.y+r.h); });
+    bx0+=ox; bx1+=ox; by0+=oy; by1+=oy;                       // 转成 chartbox 坐标
+    const clamp=(x,y)=>({x:Math.max(ax0,Math.min(x,ax1-tw)), y:Math.max(ay0,Math.min(y,ay1-th))});
+    const ovArea=(x,y)=>{                                    // 与债券 5 日 K 线包围盒的重叠面积
+      const ix=Math.max(0, Math.min(x+tw, bx1+4)-Math.max(x, bx0-4));
+      const iy=Math.max(0, Math.min(y+th, by1+4)-Math.max(y, by0-4));
+      return ix*iy;
+    };
+    // 候选位置优先级：右 → 左 → 上 → 下，选重叠最小者
+    const cands=[ clamp(bx1+8, by0), clamp(bx0-tw-8, by0), clamp(bx0, by0-th-8), clamp(bx0, by1+8) ];
+    let best=cands[0], bestOv=Infinity;
+    for(const c of cands){ const ov=ovArea(c.x,c.y); if(ov<bestOv){ bestOv=ov; best=c; } }
+    tx=best.x; ty=best.y;
+  } else {
+    // 兜底：光标/点按位置附近（避免越界）
+    tx=Math.max(ax0, Math.min(pos.clientX-cbRect.left+16, ax1-tw));
+    ty=Math.max(ay0, Math.min(pos.clientY-cbRect.top+14, ay1-th));
+  }
+  tip.style.left=tx+'px'; tip.style.top=ty+'px';
+}
+
+/* ===================== 图例 ===================== */
+const legend=document.getElementById('legend');
+BONDS.forEach(b=>{
+  const el=document.createElement('div');
+  el.className='lg'; el.dataset.code=b.code;
+  el.innerHTML=`<span class="sw" style="background:${b.color}"></span>
+    <span>${b.name}</span><span class="code">${b.code}</span>`;
+  el.onclick=()=>{ visible[b.code]=!visible[b.code]; el.classList.toggle('off',!visible[b.code]); draw(); };
+  legend.appendChild(el);
+});
+document.getElementById('foot').textContent=
+ `共纳入 ${BONDS.length} 只可转债（上市于 ${META.range[0]}~${META.range[1]} 且取到真实首日交易）。数据来源：westock 可转债/正股日 K 线（前复权），生成于 ${META.generated}。红涨绿跌。`;
+
+window.addEventListener('resize',resize);
+resize();
+</script>
+</body>
+</html>
