@@ -154,6 +154,8 @@ function resize(){
 }
 
 function draw(){
+  // 防御：纵轴可见范围出现非有限值/倒置时重置，杜绝 NaN 扩散到全图
+  if(!isFinite(vLo)||!isFinite(vHi)||vHi<=vLo){ vLo=gLo; vHi=gHi; }
   ctx.clearRect(0,0,W,H);
   const L=60,R=28,T=44,B=58;
   const pw=W-L-R, ph=H-T-B;
@@ -510,10 +512,12 @@ window.addEventListener('mousemove',e=>{
   if(!vdrag) return;
   const trackH=Math.max(1, vscrollEl.clientHeight-2);
   const gRange=gHi-gLo;
-  const vRange=vHi-vLo;
+  const vRange=vdStartHi-vdStartLo;            // 拖动中可视范围不变，用起点值
   const thumbH=Math.max(24, trackH*vRange/gRange);
+  const denom=trackH-thumbH;                    // 滑块可移动像素距离
+  if(denom<=0) return;                          // 可视范围=全局，无可平移空间，防除零 NaN
   const dy=e.clientY-vdStartY;
-  const dPrice=-(dy/(trackH-thumbH))*gRange;   // 向上拖 -> 看更高价格
+  const dPrice=-(dy/denom)*(gRange-vRange);     // 向上拖 -> 看更高价格（用可平移价格余量映射）
   let nLo=vdStartLo+dPrice, nHi=vdStartHi+dPrice;
   if(nLo<gLo){ nHi+=gLo-nLo; nLo=gLo; }
   if(nHi>gHi){ nLo-=nHi-gHi; nHi=gHi; }
