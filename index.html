@@ -52,6 +52,10 @@
   .hthumb:hover{opacity:1;}
   .hthumb:active{cursor:grabbing;}
   .hscroll .hlbl{position:absolute;top:0;right:8px;font-size:10.5px;color:var(--muted);line-height:18px;pointer-events:none;font-variant-numeric:tabular-nums;}
+  .vscroll{position:absolute;right:3px;top:44px;bottom:58px;width:16px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;cursor:pointer;user-select:none;z-index:3;}
+  .vthumb{position:absolute;left:2px;right:2px;top:0;height:50px;background:var(--accent);border-radius:6px;opacity:.85;cursor:grab;}
+  .vthumb:hover{opacity:1;}
+  .vthumb:active{cursor:grabbing;}
 </style>
 </head>
 <body>
@@ -68,6 +72,7 @@
   <div class="legend" id="legend"></div>
   <div class="chartbox" id="chartbox">
     <div class="scroll" id="scroll"><canvas id="cv"></canvas></div>
+    <div class="vscroll" id="vscroll"><div class="vthumb" id="vthumb"></div></div>
     <div id="tip"></div>
   </div>
   <div class="hscroll" id="hscroll"><div class="hthumb" id="hthumb"></div><span class="hlbl" id="hlbl"></span></div>
@@ -105,10 +110,12 @@ BONDS.forEach(b=>{
     if(di>=0) byDate[di].push({bond:b,k});
   });
 });
-// y 轴范围
-let lo=Infinity, hi=-Infinity;
-BONDS.forEach(b=>b.k.forEach(k=>{lo=Math.min(lo,k.l);hi=Math.max(hi,k.h);}));
-const ypad=(hi-lo)*0.06; lo-=ypad; hi+=ypad;
+// y 轴范围（全局 gLo/gHi 兜底 + 可见 vLo/vHi，纵轴可拖动平移/滚轮缩放）
+let gLo=Infinity, gHi=-Infinity;
+BONDS.forEach(b=>b.k.forEach(k=>{gLo=Math.min(gLo,k.l);gHi=Math.max(gHi,k.h);}));
+const ypad=(gHi-gLo)*0.06; gLo-=ypad; gHi+=ypad;
+let vLo=gLo, vHi=gHi;   // 可见价格范围（初始=全局）
+const MIN_YLIM=2;       // 纵轴最小可视范围（元）
 
 /* ===================== 绘制 ===================== */
 const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
@@ -128,7 +135,7 @@ const MIN_COUNT=6;
 function fmt(n){return n.toLocaleString('zh-CN');}
 function cls(v){return v>=0?'up':'dn';}
 function pct(v){return (v>=0?'+':'')+v.toFixed(2)+'%';}
-function priceY(p){const {T,ph}=geo; const range=hi-lo; return T+ph*(1-(p-lo)/range);}
+function priceY(p){const {T,ph}=geo; const range=vHi-vLo; return T+ph*(1-(p-vLo)/range);}
 // 日期 i 的屏幕 x 中心（连续坐标，支持小数 viewStart 平滑平移）
 function xOfDate(i){const {L,pw}=geo; return L + pw*((i-viewStart)/viewCount);}
 function colWvis(){const {pw}=geo; return pw/viewCount;}
@@ -150,7 +157,7 @@ function resize(){
 
 function draw(){
   ctx.clearRect(0,0,W,H);
-  const L=60,R=16,T=44,B=58;
+  const L=60,R=28,T=44,B=58;
   const pw=W-L-R, ph=H-T-B;
   geo={L,R,T,B,pw,ph};
   const cw=colWvis();
@@ -170,16 +177,16 @@ function draw(){
   }
   ctx.setLineDash([]); ctx.restore();
   // y 网格 + 标签
-  const steps=6, range=hi-lo;
+  const steps=6, range=vHi-vLo;
   ctx.font='11px sans-serif'; ctx.textBaseline='middle';
   for(let s=0;s<=steps;s++){
-    const val=lo+range*s/steps, y=T+ph*(1-s/steps);
+    const val=vLo+range*s/steps, y=T+ph*(1-s/steps);
     ctx.strokeStyle='rgba(255,255,255,.07)'; ctx.lineWidth=1;
     ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(L+pw,y);ctx.stroke();
     ctx.fillStyle='#8b97b3'; ctx.textAlign='right'; ctx.fillText(val.toFixed(0),L-8,y);
   }
   // 价格刻度线（100 元面值）
-  const y100=T+ph*(1-(100-lo)/range);
+  const y100=T+ph*(1-(100-vLo)/range);
   if(y100>T&&y100<T+ph){
     ctx.strokeStyle='rgba(255,210,90,.45)'; ctx.setLineDash([4,4]);
     ctx.beginPath();ctx.moveTo(L,y100);ctx.lineTo(L+pw,y100);ctx.stroke();
@@ -250,6 +257,7 @@ function draw(){
     `视图：显示第 ${from}~${to} 日 / 共 ${DATES.length} 个交易日`+
     (DATES.length>viewCount? nav : ' · 已全部显示');
   updateScroll();
+  updateVScroll();
 }
 // 某转债在某日期列中的蜡烛中心 x（与蜡烛布局一致）
 function bondX(i,bond){
@@ -476,6 +484,74 @@ hscrollEl.addEventListener('mousedown',e=>{
     draw();
   }
 });
+
+/* ===================== 垂直滚动条（纵轴价格拖动窗口） ===================== */
+const vscrollEl=document.getElementById('vscroll');
+const vthumbEl=document.getElementById('vthumb');
+
+function updateVScroll(){
+  const trackH=Math.max(1, vscrollEl.clientHeight-2);
+  const gRange=gHi-gLo;
+  if(gRange<=0){ vscrollEl.style.display='none'; return; }
+  vscrollEl.style.display='block';
+  const vRange=vHi-vLo;
+  const thumbH=Math.max(24, trackH*vRange/gRange);
+  const thumbTop=(gHi-vHi)/gRange*(trackH-thumbH);
+  vthumbEl.style.height=thumbH+'px';
+  vthumbEl.style.top=thumbTop+'px';
+}
+
+// 拖动滑块平移纵轴
+let vdrag=false, vdStartY=0, vdStartLo=0, vdStartHi=0;
+vthumbEl.addEventListener('mousedown',e=>{
+  vdrag=true; vdStartY=e.clientY; vdStartLo=vLo; vdStartHi=vHi;
+  e.preventDefault(); e.stopPropagation();
+});
+window.addEventListener('mousemove',e=>{
+  if(!vdrag) return;
+  const trackH=Math.max(1, vscrollEl.clientHeight-2);
+  const gRange=gHi-gLo;
+  const vRange=vHi-vLo;
+  const thumbH=Math.max(24, trackH*vRange/gRange);
+  const dy=e.clientY-vdStartY;
+  const dPrice=-(dy/(trackH-thumbH))*gRange;   // 向上拖 -> 看更高价格
+  let nLo=vdStartLo+dPrice, nHi=vdStartHi+dPrice;
+  if(nLo<gLo){ nHi+=gLo-nLo; nLo=gLo; }
+  if(nHi>gHi){ nLo-=nHi-gHi; nHi=gHi; }
+  vLo=nLo; vHi=nHi;
+  draw();
+});
+window.addEventListener('mouseup',()=>{ vdrag=false; });
+
+// 点击竖条空白处：以点击位置为中心跳转
+vscrollEl.addEventListener('mousedown',e=>{
+  if(e.target!==vthumbEl){
+    const rect=vscrollEl.getBoundingClientRect();
+    const trackH=Math.max(1, rect.height-2);
+    const gRange=gHi-gLo;
+    const vRange=vHi-vLo;
+    const cy=e.clientY-rect.top-1;
+    const centerPrice=gHi-(cy/trackH)*gRange;
+    let nLo=centerPrice-vRange/2, nHi=centerPrice+vRange/2;
+    if(nLo<gLo){ nHi+=gLo-nLo; nLo=gLo; }
+    if(nHi>gHi){ nLo-=nHi-gHi; nHi=gHi; }
+    vLo=nLo; vHi=nHi;
+    draw();
+  }
+});
+
+// 滚轮在竖条上缩放纵轴（向下滚=看更大价格范围）
+vscrollEl.addEventListener('wheel',e=>{
+  e.preventDefault(); e.stopPropagation();
+  const center=(vLo+vHi)/2;
+  const factor=e.deltaY>0 ? 1.15 : 0.87;
+  let nRange=Math.max(MIN_YLIM, Math.min(gHi-gLo, (vHi-vLo)*factor));
+  let nLo=center-nRange/2, nHi=center+nRange/2;
+  if(nLo<gLo){ nHi+=gLo-nLo; nLo=gLo; }
+  if(nHi>gHi){ nLo-=nHi-gHi; nHi=gHi; }
+  vLo=nLo; vHi=nHi;
+  draw();
+},{passive:false});
 
 /* ===================== 图例 ===================== */
 const legend=document.getElementById('legend');
