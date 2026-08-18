@@ -52,10 +52,12 @@
   .hthumb:hover{opacity:1;}
   .hthumb:active{cursor:grabbing;}
   .hscroll .hlbl{position:absolute;top:0;right:8px;font-size:10.5px;color:var(--muted);line-height:18px;pointer-events:none;font-variant-numeric:tabular-nums;}
-  .vscroll{position:absolute;right:3px;top:44px;bottom:58px;width:16px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;cursor:pointer;user-select:none;z-index:3;}
-  .vthumb{position:absolute;left:2px;right:2px;top:0;height:50px;background:var(--accent);border-radius:6px;opacity:.85;cursor:grab;}
-  .vthumb:hover{opacity:1;}
-  .vthumb:active{cursor:grabbing;}
+  .yrange{display:flex;align-items:center;gap:7px;margin:4px 0 8px;font-size:12.5px;color:var(--muted);flex-wrap:wrap;}
+  .yrange .ylbl{font-weight:600;color:var(--txt);}
+  .yrange input{width:72px;padding:4px 6px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;color:var(--txt);font-size:13px;font-variant-numeric:tabular-nums;text-align:center;}
+  .yrange input:focus{outline:none;border-color:var(--accent);}
+  .yrange button{padding:4px 14px;background:var(--accent);border:none;border-radius:6px;color:#fff;font-size:12.5px;cursor:pointer;}
+  .yrange button:hover{opacity:.88;}
 </style>
 </head>
 <body>
@@ -70,9 +72,15 @@
 
 <div class="wrap">
   <div class="legend" id="legend"></div>
+  <div class="yrange" id="yrange">
+    <span class="ylbl">纵轴价格区间</span>
+    <input type="number" id="ylo" value="120" step="1" placeholder="下限"> 元
+    <span>~</span>
+    <input type="number" id="yhi" value="300" step="1" placeholder="上限"> 元
+    <button id="yapply">应用</button>
+  </div>
   <div class="chartbox" id="chartbox">
     <div class="scroll" id="scroll"><canvas id="cv"></canvas></div>
-    <div class="vscroll" id="vscroll"><div class="vthumb" id="vthumb"></div></div>
     <div id="tip"></div>
   </div>
   <div class="hscroll" id="hscroll"><div class="hthumb" id="hthumb"></div><span class="hlbl" id="hlbl"></span></div>
@@ -110,10 +118,9 @@ BONDS.forEach(b=>{
     if(di>=0) byDate[di].push({bond:b,k});
   });
 });
-// y 轴范围：固定 120~300 元，纵轴可上下拖动 / 滚轮缩放查看子区间
+// y 轴范围：默认 120~300 元，由顶部输入框自定义（gLo/gHi 仅作默认值兜底）
 const gLo=120, gHi=300;
-let vLo=gLo, vHi=gHi;   // 可见价格范围（初始=120~300 全范围）
-const MIN_YLIM=15;      // 纵轴最小可视范围（元），避免刻度标签重叠
+let vLo=gLo, vHi=gHi;   // 当前可见价格范围
 
 /* ===================== 绘制 ===================== */
 const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
@@ -157,7 +164,7 @@ function draw(){
   // 防御：纵轴可见范围出现非有限值/倒置时重置，杜绝 NaN 扩散到全图
   if(!isFinite(vLo)||!isFinite(vHi)||vHi<=vLo){ vLo=gLo; vHi=gHi; }
   ctx.clearRect(0,0,W,H);
-  const L=60,R=28,T=44,B=58;
+  const L=60,R=16,T=44,B=58;
   const pw=W-L-R, ph=H-T-B;
   geo={L,R,T,B,pw,ph};
   const cw=colWvis();
@@ -258,7 +265,6 @@ function draw(){
     `视图：显示第 ${from}~${to} 日 / 共 ${DATES.length} 个交易日`+
     (DATES.length>viewCount? nav : ' · 已全部显示');
   updateScroll();
-  updateVScroll();
 }
 // 某转债在某日期列中的蜡烛中心 x（与蜡烛布局一致）
 function bondX(i,bond){
@@ -486,75 +492,18 @@ hscrollEl.addEventListener('mousedown',e=>{
   }
 });
 
-/* ===================== 垂直滚动条（纵轴价格拖动窗口） ===================== */
-const vscrollEl=document.getElementById('vscroll');
-const vthumbEl=document.getElementById('vthumb');
-
-function updateVScroll(){
-  const trackH=Math.max(1, vscrollEl.clientHeight-2);
-  const gRange=gHi-gLo;
-  if(gRange<=0){ vscrollEl.style.display='none'; return; }
-  vscrollEl.style.display='block';
-  const vRange=vHi-vLo;
-  const thumbH=Math.max(24, trackH*vRange/gRange);
-  const thumbTop=(gHi-vHi)/gRange*(trackH-thumbH);
-  vthumbEl.style.height=thumbH+'px';
-  vthumbEl.style.top=thumbTop+'px';
+/* ===================== 纵轴价格区间输入 ===================== */
+const yloEl=document.getElementById('ylo');
+const yhiEl=document.getElementById('yhi');
+function applyYRange(){
+  const lo=parseFloat(yloEl.value), hi=parseFloat(yhiEl.value);
+  if(isFinite(lo)&&isFinite(hi)&&lo<hi){ vLo=lo; vHi=hi; draw(); }
 }
-
-// 拖动滑块平移纵轴
-let vdrag=false, vdStartY=0, vdStartLo=0, vdStartHi=0;
-vthumbEl.addEventListener('mousedown',e=>{
-  vdrag=true; vdStartY=e.clientY; vdStartLo=vLo; vdStartHi=vHi;
-  e.preventDefault(); e.stopPropagation();
-});
-window.addEventListener('mousemove',e=>{
-  if(!vdrag) return;
-  const trackH=Math.max(1, vscrollEl.clientHeight-2);
-  const gRange=gHi-gLo;
-  const vRange=vdStartHi-vdStartLo;            // 拖动中可视范围不变，用起点值
-  const thumbH=Math.max(24, trackH*vRange/gRange);
-  const denom=trackH-thumbH;                    // 滑块可移动像素距离
-  if(denom<=0) return;                          // 可视范围=全局，无可平移空间，防除零 NaN
-  const dy=e.clientY-vdStartY;
-  const dPrice=-(dy/denom)*(gRange-vRange);     // 向上拖 -> 看更高价格（用可平移价格余量映射）
-  let nLo=vdStartLo+dPrice, nHi=vdStartHi+dPrice;
-  if(nLo<gLo){ nHi+=gLo-nLo; nLo=gLo; }
-  if(nHi>gHi){ nLo-=nHi-gHi; nHi=gHi; }
-  vLo=nLo; vHi=nHi;
-  draw();
-});
-window.addEventListener('mouseup',()=>{ vdrag=false; });
-
-// 点击竖条空白处：以点击位置为中心跳转
-vscrollEl.addEventListener('mousedown',e=>{
-  if(e.target!==vthumbEl){
-    const rect=vscrollEl.getBoundingClientRect();
-    const trackH=Math.max(1, rect.height-2);
-    const gRange=gHi-gLo;
-    const vRange=vHi-vLo;
-    const cy=e.clientY-rect.top-1;
-    const centerPrice=gHi-(cy/trackH)*gRange;
-    let nLo=centerPrice-vRange/2, nHi=centerPrice+vRange/2;
-    if(nLo<gLo){ nHi+=gLo-nLo; nLo=gLo; }
-    if(nHi>gHi){ nLo-=nHi-gHi; nHi=gHi; }
-    vLo=nLo; vHi=nHi;
-    draw();
-  }
-});
-
-// 滚轮在竖条上缩放纵轴（向下滚=看更大价格范围）
-vscrollEl.addEventListener('wheel',e=>{
-  e.preventDefault(); e.stopPropagation();
-  const center=(vLo+vHi)/2;
-  const factor=e.deltaY>0 ? 1.15 : 0.87;
-  let nRange=Math.max(MIN_YLIM, Math.min(gHi-gLo, (vHi-vLo)*factor));
-  let nLo=center-nRange/2, nHi=center+nRange/2;
-  if(nLo<gLo){ nHi+=gLo-nLo; nLo=gLo; }
-  if(nHi>gHi){ nLo-=nHi-gHi; nHi=gHi; }
-  vLo=nLo; vHi=nHi;
-  draw();
-},{passive:false});
+document.getElementById('yapply').addEventListener('click',applyYRange);
+yloEl.addEventListener('change',applyYRange);
+yhiEl.addEventListener('change',applyYRange);
+yloEl.addEventListener('keydown',e=>{ if(e.key==='Enter') applyYRange(); });
+yhiEl.addEventListener('keydown',e=>{ if(e.key==='Enter') applyYRange(); });
 
 /* ===================== 图例 ===================== */
 const legend=document.getElementById('legend');
