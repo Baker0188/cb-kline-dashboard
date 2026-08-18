@@ -110,12 +110,10 @@ BONDS.forEach(b=>{
     if(di>=0) byDate[di].push({bond:b,k});
   });
 });
-// y 轴范围（全局 gLo/gHi 兜底 + 可见 vLo/vHi，纵轴可拖动平移/滚轮缩放）
-let gLo=Infinity, gHi=-Infinity;
-BONDS.forEach(b=>b.k.forEach(k=>{gLo=Math.min(gLo,k.l);gHi=Math.max(gHi,k.h);}));
-const ypad=(gHi-gLo)*0.06; gLo-=ypad; gHi+=ypad;
-let vLo=gLo, vHi=gHi;   // 可见价格范围（初始=全局）
-const MIN_YLIM=2;       // 纵轴最小可视范围（元）
+// y 轴范围：固定 120~300 元，纵轴可上下拖动 / 滚轮缩放查看子区间
+const gLo=120, gHi=300;
+let vLo=gLo, vHi=gHi;   // 可见价格范围（初始=120~300 全范围）
+const MIN_YLIM=15;      // 纵轴最小可视范围（元），避免刻度标签重叠
 
 /* ===================== 绘制 ===================== */
 const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
@@ -176,14 +174,15 @@ function draw(){
     ctx.beginPath();ctx.moveTo(x,T);ctx.lineTo(x,T+ph);ctx.stroke();
   }
   ctx.setLineDash([]); ctx.restore();
-  // y 网格 + 标签
+  // y 网格 + 标签（范围窄时用小数精度，避免刻度数字重叠）
   const steps=6, range=vHi-vLo;
+  const yDec = range < 30 ? 1 : 0;
   ctx.font='11px sans-serif'; ctx.textBaseline='middle';
   for(let s=0;s<=steps;s++){
     const val=vLo+range*s/steps, y=T+ph*(1-s/steps);
     ctx.strokeStyle='rgba(255,255,255,.07)'; ctx.lineWidth=1;
     ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(L+pw,y);ctx.stroke();
-    ctx.fillStyle='#8b97b3'; ctx.textAlign='right'; ctx.fillText(val.toFixed(0),L-8,y);
+    ctx.fillStyle='#8b97b3'; ctx.textAlign='right'; ctx.fillText(val.toFixed(yDec),L-8,y);
   }
   // 价格刻度线（100 元面值）
   const y100=T+ph*(1-(100-vLo)/range);
